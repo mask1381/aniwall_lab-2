@@ -190,19 +190,26 @@ def main() -> int:
     print(f"batch loaded: mode={batch.get('mode')} dry={bool(batch.get('dry'))}")
     sink = AckSink(chat, args.batch_id)
     err = None
+    failed = False
     try:
-        run(batch, sink)
+        failed = bool(run(batch, sink))
     except BaseException as e:
         if isinstance(e, KeyboardInterrupt):
             raise
         err = e
 
-    if batch.get("dry") or err is not None:
-        head = f"🧾 {args.batch_id}" + (f" ❌ {type(err).__name__}: {str(err)[:300]}" if err else " (dry)")
-        send_log(chat, head, 12000 if batch.get("dry") else 3000)
+    if batch.get("dry") or err is not None or failed:
+        if err is not None:
+            head = f"🧾 {args.batch_id} ❌ {type(err).__name__}: {str(err)[:300]}"
+        elif failed:
+            head = f"🧾 {args.batch_id} ⚠️ یکی از مسیرها خطا داد"
+        else:
+            head = f"🧾 {args.batch_id} (dry)"
+        send_log(chat, head, 12000 if batch.get("dry") else 6000)
     say(chat, f"/ack {args.batch_id} done")
-    print(f"finished: error={type(err).__name__ if err else None}")
-    return 1 if err else 0
+    print(f"finished: error={type(err).__name__ if err else None} failed={failed}")
+    return 1 if (err or failed) else 0
+  
 
 
 if __name__ == "__main__":
