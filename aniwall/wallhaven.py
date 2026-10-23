@@ -1,8 +1,10 @@
 """
 مسیر Wallhaven / HD (زمان‌بندی‌شده؛ اسلات‌های ثابت HD_SLOTS):
-  جستجو ← حذف تکراری ← جزئیات ← فیلتر ← غنی‌سازی ← انتخاب (Pick Best Post9)
-  ← دانلود و آماده‌سازی ← اسناد فوری و گروهی به مخزن + گرفتن لینک بات
-  ← کپشن (هشتگ + لینک دانلود HD) ← زمان‌بندی عکس‌ها ← ثبت در sent_ids
+  جستجو ← جزئیات (با مکث) ← فیلتر ← غنی‌سازی ← انتخاب (Pick Best Post9)
+  ← دانلود و آماده‌سازی ← اسناد به مخزن + لینک بات ← کپشن ← زمان‌بندی ← ثبت در sent_ids
+
+تفاوت با قبل: آیتم‌های ردشده‌ی فیلتر برچسب هم به sent اضافه می‌شن تا ران بعدی دوباره همون‌ها
+رو نگیره، و تا رسیدن به آیتم کافی چند دور (WALLHAVEN_MAX_ROUNDS) جستجو می‌شه.
 """
 
 import os
@@ -22,7 +24,7 @@ DL_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AniWallLab/1.0)"}
 DL_TIMEOUT = (15, 180)
 
 
-def search_new_ids(sent, log) -> list:
+def search_new_ids(sent, log, extra_skip=()) -> list:
     seen, fresh = set(), []
     pages_used = 0
     for page in range(1, config.WALLHAVEN_MAX_PAGES + 1):
@@ -37,7 +39,7 @@ def search_new_ids(sent, log) -> list:
             if not wid or wid in seen:
                 continue
             seen.add(wid)
-            if f"wallhaven:{wid}" not in sent:
+            if f"wallhaven:{wid}" not in sent and wid not in extra_skip:
                 fresh.append(wid)
                 if len(fresh) >= config.WALLHAVEN_MAX_ITEMS:
                     break
@@ -105,6 +107,7 @@ def adopt(p: dict) -> dict:
 def fetch_details(ids: list, log) -> list:
     def one(wid):
         try:
+            net.human_sleep(config.WALLHAVEN_DETAIL_DELAY)
             body = net.request("GET", f"https://wallhaven.cc/api/v1/w/{wid}",
                                params={"apikey": config.WALLHAVEN_API_KEY}).json()
             data = body.get("data")
@@ -119,6 +122,22 @@ def fetch_details(ids: list, log) -> list:
         label="جزئیات wallhaven")
     log(f"جزئیات گرفته‌شده: {len(out)} از {len(ids)}")
     return out
+
+
+def report_rejections(adopted: list, kept_ids: set, log) -> None:
+    """پرتکرارترین برچسب‌هایی که آیتم‌ها رو حذف کردن (برای دیدن اینکه فیلتر زیادی سخت‌گیره یا نه)."""
+    removed = [a for a in adopted if a["id"] not in kept_ids]
+    if not removed:
+        return
+    fset = config.pick_filter_set("wallhaven")
+    counts = {}
+    for a in removed:
+        hit = {config.norm_tag(t) for t in enrich._filter_tags(a)} & fset
+        for h in hit:
+            counts[h] = counts.get(h, 0) + 1
+    top = sorted(counts.items(), key=lambda kv: -kv[1])[:8]
+    log(f"حذف‌شده‌ها: {len(removed)} | برچسب‌های حذف‌کننده: "
+        + (", ".join(f"{k}×{v}" for k, v in top) if top else "(بدون برچسب مشخص: URL/فیلد ناقص)"))
 
 
 def _ext_of(url: str) -> str:
@@ -184,23 +203,19 @@ def fill_slot(sched, pool, when, sent, dry_run, log) -> tuple[str, list]:
             log("   [dry-run] اسناد مخزن: " + ", ".join(f"{n} ({len(b) // 1024}KB)" for b, n in docs))
             return "ok", pool
 
-        # قبل از فرستادن سند به مخزن مطمئن می‌شیم برای عکس‌ها جا هست (تا سند یتیم نمونه)
         if not sched.room_for(len(photos)):
             log(f"صف پر است؛ جا برای {len(photos)} عکس نیست.")
             return "full", pool
 
-        # ۱) اسناد: فوری و گروهی به مخزن ← لینک بات (عیناً)
         try:
             stored = sched.send_documents_to_storage(docs)
         except scheduler.StorageLinkError as e:
             raise RuntimeError(f"گرفتن لینک مخزن شکست خورد: {e}")
         rollback_ids = list(stored["doc_ids"]) + ([stored["link_msg_id"]] if stored["link_msg_id"] else [])
 
-        # ۲) کپشن با لینک
         cap = caption.build_caption_wallhaven(posts, hd_link=stored["link"])
         log(f"کپشن: {cap}")
 
-        # ۳) عکس‌ها زمان‌بندی؛ اگه نشد، اسناد (و پیام لینک) مخزن برگردونده می‌شن
         try:
             sched.schedule_photos(when, photos, cap)
         except Exception as e:
@@ -216,13 +231,44 @@ def fill_slot(sched, pool, when, sent, dry_run, log) -> tuple[str, list]:
     return "empty", pool
 
 
+def build_pool(sent, log, want: int) -> list:
+    """چند دور جستجو+فیلتر تا حداقل `want` آیتم سالم جمع بشه.
+    ردشده‌ها (برچسب/URL/فیلد ناقص) به sent اضافه می‌شن تا دوباره گرفته نشن؛
+    آیتم‌هایی که فقط گرفتن جزئیاتشان شکست خورده در همین ران نادیده گرفته می‌شن (نه برای همیشه)."""
+    pool, tried = [], set()
+    for rnd in range(1, int(config.WALLHAVEN_MAX_ROUNDS) + 1):
+        if rnd > 1:
+            net.human_sleep(config.WALLHAVEN_ROUND_DELAY)
+        ids = search_new_ids(sent, log, extra_skip=tried)
+        if not ids:
+            log(f"دور {rnd}: آیتم جدیدی نیست.")
+            break
+        tried.update(ids)
+
+        adopted = fetch_details(ids, log)
+        kept = enrich.filter_items(adopted, log)
+        kept = [x for x in kept if enrich.valid_image_urls(x)]
+        kept_ids = {x["id"] for x in kept}
+        report_rejections(adopted, kept_ids, log)
+
+        rejected = [a["id"] for a in adopted if a["id"] not in kept_ids]
+        if rejected:
+            sent.add(*rejected)
+            log(f"{len(rejected)} آیتم ردشده برای ران‌های بعدی علامت خورد.")
+
+        pool.extend(kept)
+        log(f"دور {rnd}: {len(kept)} آیتم سالم (جمع {len(pool)} از حداقل {want})")
+        if len(pool) >= want:
+            break
+    return pool
+
+
 def run(sent, state, dry_run, log, sched) -> int:
     slots = sched.plan(config.HD_SLOTS, "HD")
     if not slots:
         log("هیچ اسلات خالی‌ای برای HD نیست؛ پایان.")
         return 0
 
-    # اسناد دیگه توی صف Scheduled نمیرن؛ هر اسلات فقط عکس‌ها رو مصرف می‌کنه
     need = config.WALLHAVEN_PICK_COUNT
     budget = sched.free_space()
     log(f"{len(slots)} اسلات خالی | جای خالی صف برای این ران: {budget} (هر اسلات {need} پیام)")
@@ -230,15 +276,9 @@ def run(sent, state, dry_run, log, sched) -> int:
         log("جای خالی کافی نیست؛ ران بعدی.")
         return 0
 
-    ids = search_new_ids(sent, log)
-    if not ids:
-        log("آیتم جدیدی نیست؛ پایان.")
-        return 0
-
-    adopted = fetch_details(ids, log)
-    items = enrich.filter_items(adopted, log)
-    items = [x for x in items if enrich.valid_image_urls(x)]
-    log(f"بعد از بررسی URL تصاویر: {len(items)} آیتم")
+    want = max(int(config.WALLHAVEN_MIN_ITEMS), len(slots) * need * 2)
+    items = build_pool(sent, log, want)
+    log(f"استخر نهایی: {len(items)} آیتم")
     if not items:
         return 0
 
