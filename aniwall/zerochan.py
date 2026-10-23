@@ -1,8 +1,10 @@
 """
-مسیر Zerochan (زمان‌بندی‌شده):
-  اسلات‌های خالی ← گروه از انیمه‌ی کیسه ← جزئیات ← فیلتر ← غنی‌سازی
-  ← انتخاب گروه (Pick Best Post10) ← کپشن ۳ لایه ← دانلود و ریسایز
-  ← Scheduled Message ← ثبت در sent_ids
+مسیر Zerochan (زمان‌بندی‌شده) با رفتار «انسانی»:
+  اسلات‌های خالی ← گروه از انیمه‌ی کیسه ← جزئیات (پشت‌سرهم، با مکث) ← فیلتر ← غنی‌سازی
+  ← انتخاب گروه ← کپشن ← دانلود (آروم) ← Scheduled Message ← ثبت در sent_ids
+
+اگه سایت بلاک کنه (۵۰۳/۴۲۹/۴۰۳): یک‌بار با صبر دوباره امتحان، بعدش کل Zerochan اون ران
+متوقف می‌شه و انیمه به کیسه برمی‌گرده (نمی‌سوزه).
 """
 
 import json
@@ -18,6 +20,37 @@ EXCLUDE_TAGS = {
     'fanart from bilibili', 'bilibili', 'fanart from x (twitter)', 'x (twitter)',
     'mobile wallpaper', 'official art from pixiv',
 }
+
+
+# ───────── درخواست با تنظیمات بلاک + هدرهای شبیه مرورگر ─────────
+def _req(method, url, **kw):
+    return net.request(
+        method, url,
+        block_statuses=config.ZEROCHAN_BLOCK_STATUSES,
+        block_wait=config.ZEROCHAN_BLOCK_WAIT,
+        block_retries=config.ZEROCHAN_BLOCK_RETRIES,
+        **kw)
+
+
+def _list_headers():
+    return {"User-Agent": config.ZEROCHAN_LIST_UA,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.zerochan.net/"}
+
+
+def _detail_headers():
+    return {"User-Agent": config.ZEROCHAN_DETAIL_UA,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.zerochan.net/"}
+
+
+def _image_headers():
+    return {"User-Agent": config.ZEROCHAN_DETAIL_UA,
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.zerochan.net/"}
 
 
 def parse_zerochan_json(text: str, key: str):
@@ -63,6 +96,7 @@ def clean_franchise(encoded: str):
         return encoded.replace("+", " ").strip() or None
 
 
+# ───────── کیسه‌ی انیمه ─────────
 def pick_anime(state, log) -> str:
     pool_version = "|".join(config.ANIME_POOL) + "::" + repr(sorted(config.ANIME_WEIGHTS.items()))
     bag = state.get("animeBag") or []
@@ -85,13 +119,43 @@ def pick_anime(state, log) -> str:
     return anime
 
 
+def _clear_fail(state, anime):
+    fails = dict(state.get("animeFails") or {})
+    if anime in fails:
+        fails.pop(anime, None)
+        state.set("animeFails", fails)
+
+
+def settle_anime(state, anime, log, *, blocked: bool):
+    """انیمه‌ای که گرفتنش شکست خورد نسوزه:
+      • بلاک سایت: همیشه به اول کیسه برمی‌گرده (تقصیر انیمه نیست)
+      • خطای دیگه: برمی‌گرده، ولی بعد از ZEROCHAN_MAX_ANIME_FAILS شکست پشت‌سرهم کنار گذاشته می‌شه"""
+    fails = dict(state.get("animeFails") or {})
+    if not blocked:
+        fails[anime] = int(fails.get(anime, 0)) + 1
+        if fails[anime] >= int(config.ZEROCHAN_MAX_ANIME_FAILS):
+            log(f"انیمه {clean_franchise(anime)} بعد از {fails[anime]} شکست پشت‌سرهم کنار گذاشته شد")
+            fails.pop(anime, None)
+            state.set("animeFails", fails)
+            state.save()
+            return
+        state.set("animeFails", fails)
+
+    bag = list(state.get("animeBag") or [])
+    bag.insert(0, anime)
+    state.set("animeBag", bag)
+    state.set("remaining", len(bag))
+    state.save()
+    log(f"انیمه {clean_franchise(anime)} به کیسه برگشت (باقی‌مانده {len(bag)})")
+
+
+# ───────── درخواست‌ها ─────────
 def fetch_candidates(anime: str, sent, log) -> list:
-    r = net.request("GET", "https://www.zerochan.net/" + anime,
-                    params=config.ZEROCHAN_LIST_PARAMS,
-                    headers={"User-Agent": config.ZEROCHAN_LIST_UA,
-                             "Accept": "application/json, text/plain, */*",
-                             "Accept-Language": "en-US,en;q=0.9"},
-                    accept_marker='"items"')
+    net.human_sleep(config.ZEROCHAN_PRE_DELAY)
+    r = _req("GET", "https://www.zerochan.net/" + anime,
+             params=config.ZEROCHAN_LIST_PARAMS,
+             headers=_list_headers(),
+             accept_marker='"items"')
 
     data = parse_zerochan_json(r.text, "items")
     if data is None:
@@ -133,43 +197,79 @@ def adopt(p: dict, franchise) -> dict:
 
 
 def fetch_details(cands: list, franchise, log) -> list:
-    cands = cands[:config.ZEROCHAN_DETAIL_MAX]
+    cands = cands[:int(config.ZEROCHAN_DETAIL_MAX)]
 
     def one(it):
         try:
-            r = net.request("GET", f"https://www.zerochan.net/{it['id']}",
-                            params={"json": 1},
-                            headers={"User-Agent": config.ZEROCHAN_DETAIL_UA},
-                            accept_marker='"id"')
+            r = _req("GET", f"https://www.zerochan.net/{it['id']}",
+                     params={"json": 1},
+                     headers=_detail_headers(),
+                     accept_marker='"id"')
             p = parse_zerochan_json(r.text, "id")
             if not isinstance(p, dict) or p.get("id") is None:
                 raise ValueError(f"پاسخ قابل‌خواندن نبود (status={r.status_code}) | {_brief(r.text)}")
             return adopt(p, franchise)
+        except net.BlockedError:
+            raise
         except Exception as e:
             raise RuntimeError(f"zerochan:{it.get('id')}: {e}") from e
 
-    out = net.map_parallel(
-        cands, one, workers=config.ZEROCHAN_DETAIL_WORKERS, log=log,
-        label="جزئیات zerochan")
+    workers = max(1, int(config.ZEROCHAN_DETAIL_WORKERS))
+    if workers > 1:
+        out = net.map_parallel(cands, one, workers=workers, log=log, label="جزئیات zerochan")
+    else:
+        out, blocked = [], None
+        for i, it in enumerate(cands):
+            if i:
+                net.human_sleep(config.ZEROCHAN_DETAIL_DELAY)
+            try:
+                out.append(one(it))
+            except net.BlockedError as e:
+                blocked = e
+                log(f"⛔ حین گرفتن جزئیات مسدود شد؛ با {len(out)} مورد ادامه می‌دیم")
+                break
+            except Exception as e:
+                log(f"⚠️ جزئیات گرفته نشد: {e}")
+        if blocked and not out:
+            raise blocked
     log(f"جزئیات گرفته‌شده: {len(out)} از {len(cands)}")
     return out
 
 
+def _download_one(post):
+    raw = _req("GET", post["image_url_hq"], headers=_image_headers()).content
+    big = (post.get("byte_size") or 0) > config.BIG_FILE_BYTES
+    quality = config.IMG_JPEG_QUALITY if big else config.IMG_JPEG_QUALITY_SMALL
+    jpg = images.to_jpeg(raw, max_side=config.IMG_MAX_SIDE_RESIZE, quality=quality)
+    return post, jpg
+
+
 def prepare_group(posts: list, log) -> list:
+    workers = max(1, int(config.ZEROCHAN_DOWNLOAD_WORKERS))
+
     def one(post):
         try:
-            raw = net.request("GET", post["image_url_hq"],
-                              headers={"User-Agent": config.ZEROCHAN_DETAIL_UA}).content
-            big = (post.get("byte_size") or 0) > config.BIG_FILE_BYTES
-            quality = config.IMG_JPEG_QUALITY if big else config.IMG_JPEG_QUALITY_SMALL
-            jpg = images.to_jpeg(raw, max_side=config.IMG_MAX_SIDE_RESIZE, quality=quality)
-            return post, jpg
+            return _download_one(post)
+        except net.BlockedError:
+            raise
         except Exception as e:
             raise RuntimeError(f"{post.get('id')}: {e}") from e
 
-    return net.map_parallel(
-        posts, one, workers=config.DOWNLOAD_WORKERS, log=log,
-        label="آماده‌سازی")
+    if workers > 1:
+        return net.map_parallel(posts, one, workers=workers, log=log, label="آماده‌سازی")
+
+    out = []
+    for i, post in enumerate(posts):
+        if i:
+            net.human_sleep(config.ZEROCHAN_DOWNLOAD_DELAY)
+        try:
+            out.append(one(post))
+        except net.BlockedError:
+            log("⛔ حین دانلود عکس‌ها مسدود شد؛ با همین تعداد ادامه می‌دیم")
+            break
+        except Exception as e:
+            log(f"⚠️ آماده‌سازی گرفته نشد: {e}")
+    return out
 
 
 def fetch_groups(sent, state, log) -> list:
@@ -177,22 +277,30 @@ def fetch_groups(sent, state, log) -> list:
     franchise = clean_franchise(anime)
     log(f"انیمه: {franchise} (باقی‌مانده در کیسه: {state.get('remaining')})")
 
-    cands = fetch_candidates(anime, sent, log)
-    if not cands:
-        log("آیتم جدیدی نیست.")
-        return []
+    try:
+        cands = fetch_candidates(anime, sent, log)
+        _clear_fail(state, anime)
+        if not cands:
+            log("آیتم جدیدی نیست.")
+            return []
 
-    adopted = fetch_details(cands, franchise, log)
-    items = enrich.filter_items(adopted, log)
-    items = [x for x in items if enrich.valid_image_urls(x)]
-    log(f"بعد از بررسی URL تصاویر: {len(items)} آیتم")
-    if not items:
-        return []
+        adopted = fetch_details(cands, franchise, log)
+        items = enrich.filter_items(adopted, log)
+        items = [x for x in items if enrich.valid_image_urls(x)]
+        log(f"بعد از بررسی URL تصاویر: {len(items)} آیتم")
+        if not items:
+            return []
 
-    enriched = enrich.enrich_posts(items)
-    groups = pickers.pick_zerochan_groups(enriched)
-    log(f"گروه‌های انتخاب‌شده: {[g['groupSize'] for g in groups]}")
-    return groups
+        enriched = enrich.enrich_posts(items)
+        groups = pickers.pick_zerochan_groups(enriched)
+        log(f"گروه‌های انتخاب‌شده: {[g['groupSize'] for g in groups]}")
+        return groups
+    except net.BlockedError:
+        settle_anime(state, anime, log, blocked=True)
+        raise
+    except Exception:
+        settle_anime(state, anime, log, blocked=False)
+        raise
 
 
 def run(sent, state, dry_run, log, sched) -> int:
@@ -205,7 +313,7 @@ def run(sent, state, dry_run, log, sched) -> int:
     budget = sched.free_space()
     log(f"{len(slots)} اسلات خالی | جای خالی صف برای این ران: {budget}")
 
-    pending, fetches, posted, failures = [], 0, 0, 0
+    pending, fetches, posted, failures, stop = [], 0, 0, 0, False
 
     for when in slots:
         if budget < 1 and not dry_run:
@@ -214,10 +322,16 @@ def run(sent, state, dry_run, log, sched) -> int:
 
         done = False
         for _try in range(3):
-            while not pending and fetches < 5:
+            while not pending and fetches < 5 and not stop:
+                if fetches:
+                    net.human_sleep(config.ZEROCHAN_BETWEEN_ANIME_DELAY)
                 fetches += 1
                 try:
                     pending = fetch_groups(sent, state, log)
+                except net.BlockedError as e:
+                    stop = True
+                    log(f"⛔ Zerochan درخواست‌ها رو رد کرد ({e.status}) — بقیه‌ی Zerochan این ران متوقف شد؛ "
+                        f"ران بعدی دوباره امتحان می‌کنه.")
                 except Exception as e:
                     log(f"⚠️ گرفتن گروه شکست خورد ({type(e).__name__}: {e})")
             if not pending:
@@ -228,7 +342,6 @@ def run(sent, state, dry_run, log, sched) -> int:
                 log(f"گروه {len(posts)} عکسی جا نمی‌شه (جای خالی {budget}) — پایان.")
                 return posted if not failures else _fail(failures, posted)
 
-            # تولید کپشن با سیستم ۳ لایه
             cap = caption.build_caption_zerochan(posts)
             log(f"اسلات {when.astimezone(tz):%m-%d %H:%M} | {len(posts)} عکس | "
                 f"low_confidence={g['low_confidence']} | {cap}")
@@ -270,6 +383,8 @@ def run(sent, state, dry_run, log, sched) -> int:
             log("برای این اسلات گروهی پیدا نشد؛ پایان.")
             break
 
+    if stop and posted == 0 and config.ZEROCHAN_BLOCK_IS_ERROR:
+        raise RuntimeError("Zerochan مسدود کرد (۵۰۳/۴۲۹/۴۰۳) و هیچ گروهی زمان‌بندی نشد — ران بعدی دوباره تلاش می‌کند")
     if failures:
         _fail(failures, posted)
     return posted
