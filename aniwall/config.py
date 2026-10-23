@@ -91,8 +91,9 @@ def in_wallhaven_window(now: datetime | None = None) -> bool:
 # ─────────────────────────────────────────
 # Zerochan
 # ─────────────────────────────────────────
-ZEROCHAN_LIST_UA = "ytpost_GWS_channel - HimedereRyu585"
-ZEROCHAN_DETAIL_UA = "HimedereRyu585"
+# در config.py
+ZEROCHAN_LIST_UA = "zerochan-mcp - HimedereRyu585"
+ZEROCHAN_DETAIL_UA = "zerochan-mcp - HimedereRyu585"
 ZEROCHAN_LIST_PARAMS = {"l": 100, "s": "fav", "json": 1}
 ZEROCHAN_DETAIL_MAX = 36             # جزئیات همهٔ لیست لازم نیست؛ برای ۲ آلبوم کافی است
 ZEROCHAN_DETAIL_WORKERS = 4
@@ -229,10 +230,10 @@ def _env_range(name, default):
 HUMAN_PACING = _env_bool("HUMAN_PACING", True)            # False = همه‌ی مکث‌ها خاموش
 
 # Zerochan
-ZEROCHAN_PRE_DELAY = _env_range("ZEROCHAN_PRE_DELAY", (3.0, 8.0))                # قبل از درخواست لیست
-ZEROCHAN_BETWEEN_ANIME_DELAY = _env_range("ZEROCHAN_BETWEEN_ANIME_DELAY", (8.0, 20.0))
-ZEROCHAN_DETAIL_DELAY = _env_range("ZEROCHAN_DETAIL_DELAY", (2.0, 5.0))          # بین جزئیات
-ZEROCHAN_DOWNLOAD_DELAY = _env_range("ZEROCHAN_DOWNLOAD_DELAY", (1.0, 2.5))      # بین دانلود عکس‌ها
+ZEROCHAN_PRE_DELAY = (5.0, 12.0)                # قبل از درخواست لیست
+ZEROCHAN_BETWEEN_ANIME_DELAY = (12.0, 25.0)      # بین انیمه‌ها
+ZEROCHAN_DETAIL_DELAY = (3.0, 6.0)               # بین جزئیات
+ZEROCHAN_DOWNLOAD_DELAY = (1.5, 3.0)             # بین دانلود عکس‌ها      # بین دانلود عکس‌ها
 ZEROCHAN_DETAIL_MAX = _env_int("ZEROCHAN_DETAIL_MAX", 14)
 ZEROCHAN_DETAIL_WORKERS = _env_int("ZEROCHAN_DETAIL_WORKERS", 1)                 # 1 = پشت‌سرهم
 ZEROCHAN_DOWNLOAD_WORKERS = _env_int("ZEROCHAN_DOWNLOAD_WORKERS", 1)
