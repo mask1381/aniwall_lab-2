@@ -91,8 +91,7 @@ def in_wallhaven_window(now: datetime | None = None) -> bool:
 # ─────────────────────────────────────────
 # Zerochan
 # ─────────────────────────────────────────
-# در config.py
-ZEROCHAN_LIST_UA = "zerochan-mcp - HimedereRyu585"
+ZEROCHAN_LIST_UA   = "zerochan-mcp - HimedereRyu585"
 ZEROCHAN_DETAIL_UA = "zerochan-mcp - HimedereRyu585"
 ZEROCHAN_LIST_PARAMS = {"l": 100, "s": "fav", "json": 1}
 ZEROCHAN_DETAIL_MAX = 36             # جزئیات همهٔ لیست لازم نیست؛ برای ۲ آلبوم کافی است
