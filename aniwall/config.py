@@ -196,3 +196,55 @@ GROUP_GAP_SECONDS = 3
 
 def pick_filter_set(source: str) -> frozenset:
     return FILTERS_BY_SOURCE.get(norm_tag(source), FILTER_DEFAULT)
+
+# ═══════════════════════════════════════════════════════════
+# رفتار «انسانی» + سقف‌ها — همه با env هم قابل تغییر
+# بازه‌ها به شکل "2-5" (ثانیه) یا یک عدد؛ بعداً می‌نویسیم که مقدار قبلی‌ها رو override می‌کنه
+# ═══════════════════════════════════════════════════════════
+def _env_bool(name, default):
+    v = os.getenv(name)
+    return default if v is None or v.strip() == "" else v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name, default):
+    try:
+        return int(os.getenv(name, "").strip())
+    except ValueError:
+        return default
+
+
+def _env_range(name, default):
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        parts = [float(x) for x in raw.replace(",", "-").split("-") if x.strip()]
+        if len(parts) == 1:
+            return (parts[0], parts[0])
+        return (min(parts[:2]), max(parts[:2]))
+    except ValueError:
+        return default
+
+
+HUMAN_PACING = _env_bool("HUMAN_PACING", True)            # False = همه‌ی مکث‌ها خاموش
+
+# Zerochan
+ZEROCHAN_PRE_DELAY = _env_range("ZEROCHAN_PRE_DELAY", (3.0, 8.0))                # قبل از درخواست لیست
+ZEROCHAN_BETWEEN_ANIME_DELAY = _env_range("ZEROCHAN_BETWEEN_ANIME_DELAY", (8.0, 20.0))
+ZEROCHAN_DETAIL_DELAY = _env_range("ZEROCHAN_DETAIL_DELAY", (2.0, 5.0))          # بین جزئیات
+ZEROCHAN_DOWNLOAD_DELAY = _env_range("ZEROCHAN_DOWNLOAD_DELAY", (1.0, 2.5))      # بین دانلود عکس‌ها
+ZEROCHAN_DETAIL_MAX = _env_int("ZEROCHAN_DETAIL_MAX", 14)
+ZEROCHAN_DETAIL_WORKERS = _env_int("ZEROCHAN_DETAIL_WORKERS", 1)                 # 1 = پشت‌سرهم
+ZEROCHAN_DOWNLOAD_WORKERS = _env_int("ZEROCHAN_DOWNLOAD_WORKERS", 1)
+ZEROCHAN_BLOCK_STATUSES = (503, 429, 403)                # نشانه‌ی بلاک/محدودیت
+ZEROCHAN_BLOCK_WAIT = _env_range("ZEROCHAN_BLOCK_WAIT", (20.0, 40.0))            # صبر قبل از تلاش دوباره
+ZEROCHAN_BLOCK_RETRIES = _env_int("ZEROCHAN_BLOCK_RETRIES", 1)                   # بعدش قطع
+ZEROCHAN_MAX_ANIME_FAILS = _env_int("ZEROCHAN_MAX_ANIME_FAILS", 2)               # خطای غیر بلاک: بعد از این‌قدر انیمه کنار می‌ره
+ZEROCHAN_BLOCK_IS_ERROR = _env_bool("ZEROCHAN_BLOCK_IS_ERROR", True)             # بلاک + هیچ پستی = ران خطادار (لاگ می‌ره گروه)
+
+# Wallhaven
+WALLHAVEN_DETAIL_WORKERS = _env_int("WALLHAVEN_DETAIL_WORKERS", 3)
+WALLHAVEN_DETAIL_DELAY = _env_range("WALLHAVEN_DETAIL_DELAY", (0.3, 0.9))
+WALLHAVEN_ROUND_DELAY = _env_range("WALLHAVEN_ROUND_DELAY", (1.0, 3.0))
+WALLHAVEN_MIN_ITEMS = _env_int("WALLHAVEN_MIN_ITEMS", 9)       # حداقل آیتم سالم قبل از انتخاب
+WALLHAVEN_MAX_ROUNDS = _env_int("WALLHAVEN_MAX_ROUNDS", 3)     # حداکثر دور جستجو+فیلتر
