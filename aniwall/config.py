@@ -71,8 +71,10 @@ SCHED_SHIFT_MAX_MIN = 15
 STORAGE_CHAT_ID = os.getenv("STORAGE_CHAT_ID", "").strip()
 STORAGE_LINK_TIMEOUT = 90               # حداکثر ثانیه‌ی انتظار برای لینکی که بات میذاره
 STORAGE_LINK_POLL = 3                   # فاصله‌ی چک کردن (ثانیه)
+# ۳.۲: نام ربات از env خوانده می‌شود (اگه عوض شود لازم نیست کد عوض شود)
+STORAGE_BOT_USERNAME = os.getenv("STORAGE_BOT_USERNAME", "littlemask02_bot").strip().lstrip("@")
 STORAGE_LINK_RE = re.compile(
-    r"https?://t\.me/littlemask02_bot\?start=[A-Za-z0-9_\-]+", re.I)
+    rf"https?://t\.me/{re.escape(STORAGE_BOT_USERNAME)}\?start=[A-Za-z0-9_\-]+", re.I)
 HD_SLOTS = ((4, 0), (12, 0))
 ZEROCHAN_SLOTS = tuple((h, 30) for h in range(0, 24, 3))
 
@@ -145,6 +147,21 @@ ANIME_POOL = [
     "Kusuriya+no+Hitorigoto", "Dungeon+Meshi", "Noragami", "Kakegurui", "Gintama", "NARUTO",
     "Mato+Seihei+no+Slave",
 ]
+
+# ۱.۳: لیست انیمه‌ها و وزن‌ها از data/anime_pool.json خوانده می‌شود — ادمین بدون تغییر
+# کد می‌تواند ویرایش‌شان کند. اگه فایل نبود یا خراب بود، مقادیر hardcoded بالا می‌ماند.
+import json as _json
+try:
+    with open(DATA_DIR / "anime_pool.json", encoding="utf-8") as _f:
+        _pool_data = _json.load(_f)
+    if isinstance(_pool_data, dict):
+        if isinstance(_pool_data.get("weights"), dict) and _pool_data.get("weights"):
+            ANIME_WEIGHTS = {str(k): int(v) for k, v in _pool_data["weights"].items() if int(v) > 0}
+        if isinstance(_pool_data.get("pool"), list) and _pool_data.get("pool"):
+            ANIME_POOL = [str(x) for x in _pool_data["pool"]]
+    del _pool_data
+except Exception:
+    pass   # fallback به hardcoded
 
 # ─────────────────────────────────────────
 # فیلتر برچسب‌ها — عیناً از نود "filter" (فقط برنچ aniwall_lab)
