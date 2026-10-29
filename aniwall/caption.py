@@ -24,6 +24,17 @@ CAPTION_LIMIT = 1024
 FALLBACK_TAG = "#AnimeArt"
 HD_LINK_TEXT = "📥 𝑫𝒐𝒘𝒏𝒍𝒐𝒂𝒅 𝑯𝑫 𝑸𝒖𝒂𝒍𝒊𝒕𝒚 ✨"
 
+_DYNAMIC_FOOTER = ""
+_BRAND_TAG = ""
+
+def set_footer(footer: str) -> None:
+    global _DYNAMIC_FOOTER
+    _DYNAMIC_FOOTER = (footer or "").strip()
+
+def set_brand_tag(tag: str) -> None:
+    global _BRAND_TAG
+    _BRAND_TAG = f"#{tag.strip().lstrip('#')}" if (tag and tag.strip()) else ""
+
 
 def _esc(s: str) -> str:
     return html.escape(str(s or ""), quote=False)
@@ -44,9 +55,12 @@ def build_caption_from_hashtags(hashtags: List[str], badge: str = "💠", extra_
         tags = [FALLBACK_TAG]
 
     def assemble(tg: List[str]) -> str:
+        if _BRAND_TAG and _BRAND_TAG not in tg:
+            tg = tg + [_BRAND_TAG]
         content = f"{badge} {' '.join(tg)}".strip()
         main = f"<blockquote>{_esc(content)}</blockquote>"
-        return f"{main}\n\n{extra_block}" if extra_block else main
+        full = f"{main}\n\n{extra_block}" if extra_block else main
+        return f"{full}\n\n{_DYNAMIC_FOOTER}" if _DYNAMIC_FOOTER else full
 
     caption = assemble(tags)
     # اگر بیش از حد طولانی شد، تگ‌های انتهایی را کم می‌کنیم (بلاک لینک ثابت می‌ماند)

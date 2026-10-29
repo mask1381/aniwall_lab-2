@@ -137,6 +137,20 @@ def run(batch: dict, sink: AckSink) -> int:
         config.STORAGE_CHAT_ID = str(batch["storage_chat_id"])
     if batch.get("wallhaven_api_key"):
         config.WALLHAVEN_API_KEY = str(batch["wallhaven_api_key"])
+    if batch.get("storage_bot_username"):
+        config.STORAGE_BOT_USERNAME = str(batch["storage_bot_username"]).lstrip("@")
+    if batch.get("anime_pool") and isinstance(batch["anime_pool"], dict):
+        pool_dict = batch["anime_pool"]
+        if pool_dict.get("weights"):
+            config.ANIME_WEIGHTS = {str(k): int(v) for k, v in pool_dict["weights"].items() if int(v) > 0}
+        if pool_dict.get("pool"):
+            config.ANIME_POOL = list(pool_dict["pool"])
+    if batch.get("footer_html"):
+        from aniwall import caption
+        caption.set_footer(str(batch["footer_html"]))
+    if batch.get("brand_tag"):
+        from aniwall import caption
+        caption.set_brand_tag(str(batch["brand_tag"]))
 
     flows_map = {
         "both": [("HD (Wallhaven)", wallhaven), ("Zerochan", zerochan)],
